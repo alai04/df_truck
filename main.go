@@ -17,6 +17,14 @@ const defaultPort = "8080"
 
 var Db *sql.DB
 
+type approvedRec struct {
+	plate string
+	bDate string
+	eDate string
+	bTime string
+	eTime string
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -55,25 +63,51 @@ func initDB(dsn string) {
 
 func queryApproved(c *gin.Context) {
 	plate := c.Query("p")
+	result := Approved(plate)
 	c.JSON(http.StatusOK, gin.H{
-		"result": Approved(plate),
+		"result": len(result) > 0,
+		"num":    len(result),
+		"desc":   Rec2String(result),
 	})
 }
 
-func Approved(plate string) bool {
+func Approved(plate string) []approvedRec {
 	stmt, err := Db.Prepare(
-		`select count(1) 
+		`select C.plate_no, D.begin_date, D.end_date, T.begin_time, T.end_time
 		from t_traffic_car C inner join t_traffic_main M on C.main_id = M.id 
-		where M.status_code = 3 and C.plate_no = ?`)
+		inner join t_traffic_date D on D.main_id = M.id 
+		inner join t_traffic_time T on T.main_id = M.id
+		where M.status_code = 3 and D.data_type = 1 and T.data_type = 1 and C.plate_no = ?
+		order by D.begin_date`)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer stmt.Close()
 
-	var count int
-	err = stmt.QueryRow(plate).Scan(&count)
+	var recs []approvedRec
+	rows, err := stmt.Query(plate)
 	if err != nil {
 		log.Fatal(err)
 	}
-	return count > 0
+	defer rows.Close()
+
+	for rows.Next() {
+		var rec approvedRec
+		if err = rows.Scan(&rec.plate, &rec.bDate, &rec.eDate, &rec.bTime, &rec.eTime); err != nil {
+			log.Fatal(err)
+		}
+		recs = append(recs, rec)
+	}
+	return recs
+}
+
+func Rec2String(recs []approvedRec) string {
+	if len(recs) == 0 {
+		return "Empty record"
+	}
+	str := "审批通行时间：\n"
+	for _, rec := range recs {
+		str += fmt.Sprintf("%s - %s, %s - %s\n", rec.bDate, rec.eDate, rec.bTime, rec.eTime)
+	}
+	return str
 }
